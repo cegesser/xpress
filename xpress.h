@@ -16,10 +16,10 @@ struct PushConst
     PushConst(double value) : value(value) {}
 };
 
-struct PushVar
+struct PushParam
 {
-    std::string name;
-    PushVar(const std::string &name) : name(std::move(name)) {}
+    std::size_t index;
+    PushParam(std::size_t index) : index(index) {}
 };
 
 using UnFunc = double (*)(double);
@@ -37,7 +37,7 @@ struct BinaryOp
     BinaryOp(BiFunc op) : op(op) {}
 };
 
-using Instruction = boost::variant<PushConst,PushVar,UnaryOp,BinaryOp> ;
+using Instruction = boost::variant<PushConst,PushParam,UnaryOp,BinaryOp> ;
 
 
 template <typename T>
@@ -45,60 +45,30 @@ struct ToDouble {
     using type = double;
 };
 
-double eval(const std::vector<Instruction> &instructions, const std::map<std::string,double> &parameters);
+double eval(const std::vector<Instruction> &instructions, const std::vector<double> &parameters);
 
-
-template<int ...> struct seq {};
-
-template<int N, int ...S> struct gen_seq : gen_seq<N-1, N-1, S...> {};
-
-template<int ...S> struct gen_seq<0, S...>{ typedef seq<S...> type; };
-
-
-template<typename ...S>
+template<typename ...D>
 struct Functor
 {
     std::vector<Instruction> instructions;
-    std::vector<std::string> parameters;
 
-    Functor(std::vector<Instruction> &&instructions,
-            std::vector<std::string> &&parameters)
-        : instructions(std::move(instructions))
-        , parameters(std::move(parameters))
-    { }
+    Functor(std::vector<Instruction> &&instructions) : instructions(std::move(instructions)) { }
 
-    double operator()(typename ToDouble<S>::type... args)
+    double operator()(D... args)
     {
-        return eval(instructions, make_arguments(args..., typename gen_seq<sizeof...(args)>::type()));
-    }
-
-    template<int I>
-    std::pair<std::string, double> make_arg(double value) {
-        return std::make_pair(parameters[I], value);
-    }
-
-    template<int ...I>
-    std::map<std::string,double> make_arguments(typename ToDouble<S>::type... args,  seq<I...> ) {
-        std::map<std::string,double> result = { make_arg<I>(args)... };
-        return result;
+        return eval(instructions, { args... });
     }
 };
 
 
-std::vector<Instruction> compile(const std::string &text);
+std::vector<Instruction> compile(const std::string &text, std::vector<std::string> &&parameters);
 
 } //namespace detail
 
 template<typename ...S>
-std::function<double(typename detail::ToDouble<S>::type...)> parse(const char *text, S ...var)
-{
-    return detail::Functor<S...>( detail::compile(text), { var... } );
-}
-
-template<typename ...S>
 std::function<double(typename detail::ToDouble<S>::type...)> parse(const std::string &text, S ...var)
 {
-    return detail::Functor<S...>( detail::compile(text), { var... } );
+    return detail::Functor<typename detail::ToDouble<S>::type...>( detail::compile(text, { var... }) );
 }
 
 

@@ -52,15 +52,20 @@ struct Emiter<PushConst>
 };
 
 template<>
-struct Emiter<PushVar>
+struct Emiter<PushParam>
 {
+    std::vector<std::string> const &params;
     std::vector<Instruction> &instructions;
 
-    Emiter(std::vector<Instruction> &instructions) : instructions(instructions) {}
+    Emiter(std::vector<std::string> const &params, std::vector<Instruction> &instructions)
+        : params(params), instructions(instructions) {}
 
     template<typename Iterator>
     void operator()(Iterator start, Iterator end) const {
-        instructions.push_back(PushVar(std::string(start, end)));
+        std::string test(start, end);
+        auto iter = std::find(params.begin(), params.end(), test);
+        std::size_t index = std::distance(params.begin(), iter);
+        instructions.push_back(PushParam(index));
     }
 };
 
@@ -104,8 +109,8 @@ Emiter<PushConst> emit_const(std::vector<Instruction> &instructions) {
     return Emiter<PushConst>(instructions);
 }
 
-Emiter<PushVar> emit_var(std::vector<Instruction> &instructions) {
-    return Emiter<PushVar>(instructions);
+Emiter<PushParam> emit_param(std::vector<std::string> const &params, std::vector<Instruction> &instructions) {
+    return Emiter<PushParam>(params, instructions);
 }
 
 Emiter<UnaryOp> emit_op(UnFunc op, std::vector<Instruction> &instructions) {
@@ -121,6 +126,7 @@ class Compiler : public spirit::grammar< Compiler >
 public:
 
     std::vector<Instruction> *instructions = nullptr;
+    std::vector<std::string> const *parameters = nullptr;
 
     template< typename ScannerT >
     class definition
@@ -130,6 +136,8 @@ public:
         definition( const Compiler& self )
         {
             std::vector<Instruction> &instructions = *self.instructions;
+            std::vector<std::string> const &parameters = *self.parameters;
+
             using namespace spirit;
             expression = term >> *( ch_p('+') >> term [emit_op(add, instructions)]
                                   | ch_p('-') >> term [emit_op(sub, instructions)])
@@ -141,10 +149,10 @@ public:
 
             factor     = primary >> *( ch_p('^') >> factor [emit_op(pow, instructions)] );
 
-            primary    = ureal_p [emit_const(*self.instructions)]
+            primary    = ureal_p [emit_const(instructions)]
                        | ch_p('-') >> primary [emit_op(neg, instructions)]
-                       | identifier [emit_var(*self.instructions)]
                        | function
+                       | identifier [emit_param(parameters, instructions)]
                        | sub_expression
                        ;
 
@@ -163,30 +171,29 @@ public:
         const spirit::rule< ScannerT >& start() const { return expression; }
     };
 
-    template< class Iter_type>
-    std::vector<Instruction> compile( Iter_type begin, Iter_type end)
+    std::vector<Instruction> compile( const std::string &text, const std::vector<std::string> &parameters )
     {
         std::vector<Instruction> result;
-        instructions = &result;
+        this->instructions = &result;
+        this->parameters = &parameters;
 
-        const spirit::parse_info< Iter_type > info = spirit::parse( begin, end, *this, spirit::space_p);
+        const auto info = spirit::parse( text.begin(), text.end(), *this, spirit::space_p);
         if (!info.hit) {
             throw std::runtime_error("error");
         }
-        instructions = nullptr;
+        this->instructions = nullptr;
         return result;
     }
 };
 
-inline void execute(const Instruction &instruction, const std::map<std::string,double> &arguments, std::vector<double> &stack)
+inline void execute(const Instruction &instruction, const std::vector<double> &arguments, std::vector<double> &stack)
 {
     type_switch(instruction,
         [&stack](const PushConst &inst) {
             stack.push_back(inst.value);
         },
-        [&stack, &arguments](const PushVar &inst) {
-            auto iter = arguments.find(inst.name);
-            stack.push_back( iter->second );
+        [&stack, &arguments](const PushParam &inst) {
+            stack.push_back( arguments[inst.index] );
         },
         [&stack](const UnaryOp &inst) {
             double v = stack.back(); stack.pop_back();
@@ -220,7 +227,7 @@ inline void execute(const Instruction &instruction, const std::map<std::string,d
 
 } //namespace
 
-double xpress::detail::eval(const std::vector<Instruction> &instructions, const std::map<std::string,double> &arguments)
+double xpress::detail::eval(const std::vector<Instruction> &instructions, const std::vector<double> &arguments)
 {
     std::vector<double> stack;
     for (Instruction const &instruction : instructions)
@@ -230,8 +237,8 @@ double xpress::detail::eval(const std::vector<Instruction> &instructions, const 
     return stack.back();
 }
 
-std::vector<Instruction> xpress::detail::compile(const std::string &text)
+std::vector<Instruction> xpress::detail::compile(const std::string &text, std::vector<std::string> &&parameters)
 {
     Compiler compiler;
-    return compiler.compile(text.begin(), text.end());
+    return compiler.compile(text, std::move(parameters));
 }

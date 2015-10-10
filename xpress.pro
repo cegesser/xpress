@@ -3,7 +3,7 @@ CONFIG += console
 CONFIG -= app_bundle
 CONFIG -= qt
 
-INCLUDEPATH += boost_1_59_0
+INCLUDEPATH += ../boost_1_59_0
 
 SOURCES += main.cpp \
     xpress.cpp
